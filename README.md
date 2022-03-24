@@ -1,5 +1,5 @@
 # Foundation-Character-Interactions
-Data Science analysis of the relationships in the novel Foundation by Isaac Asimvo
+Data Science analysis of the relationships in the novel Foundation by Isaac Asimov
 
 <img width="1054" alt="FoundationClusters" src="https://user-images.githubusercontent.com/72196131/136686142-6669222d-3c1c-4dec-b5df-e27df6caae77.png">
 
