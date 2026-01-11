@@ -12,31 +12,71 @@ This notebook uses simulated LLM responses to demonstrate the differences withou
 
 ## Option 2: Using the LLM Character Extractor
 
+### Supported Providers
+
+The character extractor now supports **7 different LLM providers**:
+
+1. **OpenAI** - GPT-4, GPT-3.5
+2. **Anthropic** - Claude 3 (Opus, Sonnet, Haiku)
+3. **AWS Bedrock** - Claude, Titan, and other models
+4. **Google Gemini** - Gemini Pro, Gemini Flash
+5. **OpenRouter** - Unified API for 100+ models
+6. **Ollama** - Local, free models (Llama2, Mixtral, etc.)
+7. **llama.cpp Server** - Local, free models with llama.cpp
+
 ### Prerequisites
 
-1. Install required packages:
+1. Install base packages:
 ```bash
 pip install nltk pandas
-pip install openai  # or anthropic, or ollama
 ```
 
-2. Set up your API key (choose one):
+2. Install provider-specific packages (choose one or more):
 
 **For OpenAI:**
 ```bash
+pip install openai
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
 **For Anthropic:**
 ```bash
+pip install anthropic
 export ANTHROPIC_API_KEY='your-api-key-here'
+```
+
+**For AWS Bedrock:**
+```bash
+pip install boto3
+export AWS_ACCESS_KEY_ID='your-access-key'
+export AWS_SECRET_ACCESS_KEY='your-secret-key'
+```
+
+**For Google Gemini:**
+```bash
+pip install google-generativeai
+export GEMINI_API_KEY='your-api-key-here'
+```
+
+**For OpenRouter:**
+```bash
+pip install openai
+export OPENROUTER_API_KEY='your-api-key-here'
 ```
 
 **For Ollama (local, free):**
 ```bash
 # Install Ollama from https://ollama.ai
-ollama pull llama2  # or another model
+ollama pull llama2  # or mixtral, or other models
 # No API key needed!
+```
+
+**For llama.cpp Server (local, free):**
+```bash
+pip install requests
+# Download and run llama.cpp server:
+# ./server -m your-model.gguf --port 8080
+export LLAMACPP_BASE_URL='http://localhost:8080'  # optional
 ```
 
 ### Basic Usage
@@ -49,9 +89,34 @@ with open('Foundation.txt', 'r', encoding='utf8') as f:
     text = f.read()
 
 # Initialize analyzer (choose your provider)
+
+# OpenAI
+analyzer = LLMCharacterAnalyzer(provider='openai', model='gpt-4')
+
+# Anthropic
+analyzer = LLMCharacterAnalyzer(provider='anthropic', model='claude-3-opus-20240229')
+
+# AWS Bedrock
 analyzer = LLMCharacterAnalyzer(
-    provider='openai',  # or 'anthropic' or 'ollama'
-    model='gpt-4',      # or 'claude-3-opus' or 'llama2'
+    provider='bedrock', 
+    model='anthropic.claude-3-sonnet-20240229-v1:0',
+    region='us-east-1'
+)
+
+# Google Gemini
+analyzer = LLMCharacterAnalyzer(provider='gemini', model='gemini-pro')
+
+# OpenRouter
+analyzer = LLMCharacterAnalyzer(provider='openrouter', model='anthropic/claude-3-opus')
+
+# Ollama
+analyzer = LLMCharacterAnalyzer(provider='ollama', model='llama2')
+
+# llama.cpp Server
+analyzer = LLMCharacterAnalyzer(
+    provider='llamacpp', 
+    model='llama2',
+    base_url='http://localhost:8080'
 )
 
 # Extract characters
@@ -114,8 +179,19 @@ characters = analyzer.extract_characters(text)
 | OpenAI | GPT-3.5 | Very Fast | ~$0.50-1 | Good |
 | Anthropic | Claude-3-Opus | Fast | ~$3-6 | Excellent |
 | Anthropic | Claude-3-Sonnet | Fast | ~$1-3 | Very Good |
+| AWS Bedrock | Claude-3-Sonnet | Fast | ~$1-3 | Very Good |
+| AWS Bedrock | Titan | Very Fast | ~$0.30-0.80 | Good |
+| Google Gemini | Gemini Pro | Very Fast | ~$0.10-0.50 | Very Good |
+| Google Gemini | Gemini Flash | Ultra Fast | ~$0.05-0.20 | Good |
+| OpenRouter | Various | Varies | ~$0.50-5 | Varies |
 | Ollama | Llama2 (7B) | Medium | $0 (Free) | Good |
 | Ollama | Mixtral (8x7B) | Slow | $0 (Free) | Very Good |
+| llama.cpp | Any GGUF | Medium-Slow | $0 (Free) | Varies |
+
+**Note:** 
+- Costs are approximate for analyzing a ~65,000 word novel
+- Speed depends on hardware for local models (Ollama, llama.cpp)
+- Quality varies by model and prompt engineering
 
 ## Tips for Best Results
 

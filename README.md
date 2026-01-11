@@ -12,8 +12,9 @@ This repository now includes resources comparing traditional NLTK-based NLP with
 ### 📚 New Resources
 
 - **[LLM_CHARACTER_ANALYSIS.md](LLM_CHARACTER_ANALYSIS.md)** - Comprehensive analysis of LLMs vs traditional NLP for character extraction
-- **[llm_character_extractor.py](llm_character_extractor.py)** - Working Python implementation using OpenAI, Anthropic, or Ollama
+- **[llm_character_extractor.py](llm_character_extractor.py)** - Working Python implementation supporting 7 LLM providers: OpenAI, Anthropic, AWS Bedrock, Google Gemini, OpenRouter, Ollama, and llama.cpp
 - **[LLM_vs_Traditional_Comparison.ipynb](LLM_vs_Traditional_Comparison.ipynb)** - Interactive Jupyter notebook comparing both approaches
+- **[QUICKSTART.md](QUICKSTART.md)** - Quick start guide with setup instructions for all providers
 
 ### 🎯 Key Findings
 

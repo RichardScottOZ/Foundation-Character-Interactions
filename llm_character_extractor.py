@@ -23,23 +23,32 @@ class LLMCharacterAnalyzer:
     Supports multiple LLM providers:
     - OpenAI (GPT-4, GPT-3.5)
     - Anthropic (Claude)
+    - AWS Bedrock (Claude, Titan, etc.)
+    - Google Gemini (Gemini Pro, Gemini Flash)
+    - OpenRouter (unified API for multiple models)
     - Local models via Ollama
+    - Local models via llama.cpp server
     """
     
-    def __init__(self, provider: str = "openai", model: str = "gpt-4", api_key: Optional[str] = None, temperature: float = 0.3):
+    def __init__(self, provider: str = "openai", model: str = "gpt-4", api_key: Optional[str] = None, 
+                 temperature: float = 0.3, region: str = "us-east-1", base_url: Optional[str] = None):
         """
         Initialize the LLM-based character analyzer.
         
         Args:
-            provider: LLM provider ("openai", "anthropic", "ollama")
+            provider: LLM provider ("openai", "anthropic", "bedrock", "gemini", "openrouter", "ollama", "llamacpp")
             model: Model name (e.g., "gpt-4", "claude-3-opus", "llama2")
-            api_key: API key for the provider (not needed for ollama)
+            api_key: API key for the provider (not needed for ollama/llamacpp)
             temperature: Temperature for LLM responses (0.0-1.0). Lower values are more deterministic.
+            region: AWS region for Bedrock (default: "us-east-1")
+            base_url: Base URL for llamacpp server (default: "http://localhost:8080")
         """
         self.provider = provider
         self.model = model
         self.api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY")
         self.temperature = temperature
+        self.region = region
+        self.base_url = base_url or os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080")
         
         # Initialize client based on provider
         self.client = self._init_client()
@@ -60,12 +69,58 @@ class LLMCharacterAnalyzer:
             except ImportError:
                 logger.error("Anthropic package not installed. Install with: pip install anthropic")
                 return None
+        elif self.provider == "bedrock":
+            try:
+                import boto3
+                return boto3.client(
+                    service_name='bedrock-runtime',
+                    region_name=self.region,
+                    aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                    aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+                )
+            except ImportError:
+                logger.error("Boto3 package not installed. Install with: pip install boto3")
+                return None
+        elif self.provider == "gemini":
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=self.api_key)
+                return genai
+            except ImportError:
+                logger.error("Google Generative AI package not installed. Install with: pip install google-generativeai")
+                return None
+        elif self.provider == "openrouter":
+            try:
+                from openai import OpenAI
+                return OpenAI(
+                    base_url="https://openrouter.ai/api/v1",
+                    api_key=self.api_key
+                )
+            except ImportError:
+                logger.error("OpenAI package not installed. Install with: pip install openai")
+                return None
         elif self.provider == "ollama":
             try:
                 import ollama
                 return ollama
             except ImportError:
                 logger.error("Ollama package not installed. Install with: pip install ollama")
+                return None
+        elif self.provider == "llamacpp":
+            try:
+                import requests
+                # Test connection to llama.cpp server
+                response = requests.get(f"{self.base_url}/health", timeout=5)
+                if response.status_code == 200:
+                    return requests  # Return requests module to use for API calls
+                else:
+                    logger.error(f"llama.cpp server not responding at {self.base_url}")
+                    return None
+            except ImportError:
+                logger.error("Requests package not installed. Install with: pip install requests")
+                return None
+            except Exception as e:
+                logger.error(f"Could not connect to llama.cpp server at {self.base_url}: {e}")
                 return None
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -240,6 +295,79 @@ Return only the JSON, no additional commentary."""
                 )
                 return response.content[0].text
             
+            elif self.provider == "bedrock":
+                # AWS Bedrock requires different payloads for different models
+                import json as json_lib
+                
+                # Format varies by model family
+                if "claude" in self.model.lower():
+                    # Anthropic Claude on Bedrock
+                    body = json_lib.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 4096,
+                        "messages": [
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": self.temperature
+                    })
+                    model_id = self.model
+                elif "titan" in self.model.lower():
+                    # Amazon Titan
+                    body = json_lib.dumps({
+                        "inputText": prompt,
+                        "textGenerationConfig": {
+                            "maxTokenCount": 4096,
+                            "temperature": self.temperature,
+                        }
+                    })
+                    model_id = self.model
+                else:
+                    # Default format
+                    body = json_lib.dumps({
+                        "prompt": prompt,
+                        "max_tokens": 4096,
+                        "temperature": self.temperature
+                    })
+                    model_id = self.model
+                
+                response = self.client.invoke_model(
+                    modelId=model_id,
+                    body=body
+                )
+                
+                response_body = json_lib.loads(response['body'].read())
+                
+                # Extract text from response based on model
+                if "claude" in self.model.lower():
+                    return response_body['content'][0]['text']
+                elif "titan" in self.model.lower():
+                    return response_body['results'][0]['outputText']
+                else:
+                    return response_body.get('completion', response_body.get('text', str(response_body)))
+            
+            elif self.provider == "gemini":
+                model = self.client.GenerativeModel(self.model)
+                response = model.generate_content(
+                    prompt,
+                    generation_config=self.client.GenerationConfig(
+                        temperature=self.temperature,
+                        max_output_tokens=4096,
+                    )
+                )
+                return response.text
+            
+            elif self.provider == "openrouter":
+                # OpenRouter uses OpenAI-compatible API
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a literary analysis expert specializing in character analysis."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=self.temperature,
+                )
+                return response.choices[0].message.content
+            
             elif self.provider == "ollama":
                 response = self.client.chat(
                     model=self.model,
@@ -249,6 +377,30 @@ Return only the JSON, no additional commentary."""
                     ],
                 )
                 return response['message']['content']
+            
+            elif self.provider == "llamacpp":
+                # llama.cpp server API
+                import json as json_lib
+                
+                response = self.client.post(
+                    f"{self.base_url}/v1/chat/completions",
+                    json={
+                        "messages": [
+                            {"role": "system", "content": "You are a literary analysis expert."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": self.temperature,
+                        "max_tokens": 4096,
+                    },
+                    timeout=120
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    return result['choices'][0]['message']['content']
+                else:
+                    logger.error(f"llama.cpp server returned error: {response.status_code}")
+                    return '{"error": "llama.cpp server error"}'
             
         except Exception as e:
             logger.error(f"Error calling LLM: {e}")
@@ -346,13 +498,48 @@ if __name__ == "__main__":
     
     print("Sample text length:", len(sample_text), "characters\n")
     
-    print("To use this analyzer, you would:")
-    print("1. Install required package: pip install openai")
-    print("2. Set your API key: export OPENAI_API_KEY='your-key-here'")
-    print("3. Initialize the analyzer:")
+    print("Supported Providers:")
+    print("=" * 60)
+    print("\n1. OpenAI (GPT-4, GPT-3.5)")
+    print("   pip install openai")
+    print("   export OPENAI_API_KEY='your-key-here'")
     print("   analyzer = LLMCharacterAnalyzer(provider='openai', model='gpt-4')")
-    print("4. Extract characters:")
+    
+    print("\n2. Anthropic Claude")
+    print("   pip install anthropic")
+    print("   export ANTHROPIC_API_KEY='your-key-here'")
+    print("   analyzer = LLMCharacterAnalyzer(provider='anthropic', model='claude-3-opus-20240229')")
+    
+    print("\n3. AWS Bedrock")
+    print("   pip install boto3")
+    print("   export AWS_ACCESS_KEY_ID='...' AWS_SECRET_ACCESS_KEY='...'")
+    print("   analyzer = LLMCharacterAnalyzer(provider='bedrock', model='anthropic.claude-3-sonnet-20240229-v1:0', region='us-east-1')")
+    
+    print("\n4. Google Gemini")
+    print("   pip install google-generativeai")
+    print("   export GEMINI_API_KEY='your-key-here'")
+    print("   analyzer = LLMCharacterAnalyzer(provider='gemini', model='gemini-pro')")
+    
+    print("\n5. OpenRouter")
+    print("   pip install openai")
+    print("   export OPENROUTER_API_KEY='your-key-here'")
+    print("   analyzer = LLMCharacterAnalyzer(provider='openrouter', model='anthropic/claude-3-opus')")
+    
+    print("\n6. Ollama (Local, Free)")
+    print("   pip install ollama")
+    print("   ollama pull llama2")
+    print("   analyzer = LLMCharacterAnalyzer(provider='ollama', model='llama2')")
+    
+    print("\n7. llama.cpp Server (Local, Free)")
+    print("   pip install requests")
+    print("   # Start llama.cpp server: ./server -m model.gguf --port 8080")
+    print("   analyzer = LLMCharacterAnalyzer(provider='llamacpp', model='llama2', base_url='http://localhost:8080')")
+    
+    print("\n" + "=" * 60)
+    print("\nExample Usage:")
     print("   characters = analyzer.extract_characters(sample_text)")
+    print("   for char in characters:")
+    print("       print(f\"{char['name']}: {char['role']} (confidence: {char['confidence']})\")")
     print("\n")
     
     print("Expected output structure:")
@@ -391,5 +578,5 @@ if __name__ == "__main__":
     
     print("\n" + "=" * 60)
     print("\nNote: This is a demonstration script.")
-    print("Actual LLM calls require API keys and internet connection.")
+    print("Actual LLM calls require API keys and internet connection (except Ollama/llama.cpp).")
     print("For production use, implement error handling and rate limiting.")
