@@ -7,8 +7,13 @@ This demonstrates how LLMs can replace or augment the traditional NLTK-based app
 """
 
 import json
+import logging
 from typing import List, Dict, Optional, Tuple
 import os
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class LLMCharacterAnalyzer:
@@ -21,7 +26,7 @@ class LLMCharacterAnalyzer:
     - Local models via Ollama
     """
     
-    def __init__(self, provider: str = "openai", model: str = "gpt-4", api_key: Optional[str] = None):
+    def __init__(self, provider: str = "openai", model: str = "gpt-4", api_key: Optional[str] = None, temperature: float = 0.3):
         """
         Initialize the LLM-based character analyzer.
         
@@ -29,10 +34,12 @@ class LLMCharacterAnalyzer:
             provider: LLM provider ("openai", "anthropic", "ollama")
             model: Model name (e.g., "gpt-4", "claude-3-opus", "llama2")
             api_key: API key for the provider (not needed for ollama)
+            temperature: Temperature for LLM responses (0.0-1.0). Lower values are more deterministic.
         """
         self.provider = provider
         self.model = model
         self.api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY")
+        self.temperature = temperature
         
         # Initialize client based on provider
         self.client = self._init_client()
@@ -44,21 +51,21 @@ class LLMCharacterAnalyzer:
                 from openai import OpenAI
                 return OpenAI(api_key=self.api_key)
             except ImportError:
-                print("OpenAI package not installed. Install with: pip install openai")
+                logger.error("OpenAI package not installed. Install with: pip install openai")
                 return None
         elif self.provider == "anthropic":
             try:
                 from anthropic import Anthropic
                 return Anthropic(api_key=self.api_key)
             except ImportError:
-                print("Anthropic package not installed. Install with: pip install anthropic")
+                logger.error("Anthropic package not installed. Install with: pip install anthropic")
                 return None
         elif self.provider == "ollama":
             try:
                 import ollama
                 return ollama
             except ImportError:
-                print("Ollama package not installed. Install with: pip install ollama")
+                logger.error("Ollama package not installed. Install with: pip install ollama")
                 return None
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -108,7 +115,7 @@ Return only the JSON array, no additional commentary."""
                 characters = json.loads(response)
                 all_characters.extend(characters)
             except json.JSONDecodeError:
-                print(f"Warning: Could not parse LLM response as JSON: {response[:100]}")
+                logger.warning(f"Could not parse LLM response as JSON: {response[:100]}")
         
         # Merge characters across chunks
         merged_characters = self._merge_characters(all_characters)
@@ -158,7 +165,7 @@ Return only the JSON, no additional commentary."""
         try:
             return json.loads(response)
         except json.JSONDecodeError:
-            print(f"Warning: Could not parse relationships JSON: {response[:100]}")
+            logger.warning(f"Could not parse relationships JSON: {response[:100]}")
             return {"relationships": []}
     
     def extract_character_traits(self, text: str, character_name: str) -> Dict:
@@ -202,7 +209,7 @@ Return only the JSON, no additional commentary."""
         try:
             return json.loads(response)
         except json.JSONDecodeError:
-            print(f"Warning: Could not parse character traits JSON: {response[:100]}")
+            logger.warning(f"Could not parse character traits JSON: {response[:100]}")
             return {"name": character_name, "error": "Could not parse response"}
     
     def _call_llm(self, prompt: str) -> str:
@@ -218,7 +225,7 @@ Return only the JSON, no additional commentary."""
                         {"role": "system", "content": "You are a literary analysis expert specializing in character analysis."},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.3,  # Lower temperature for more consistent results
+                    temperature=self.temperature,
                 )
                 return response.choices[0].message.content
             
@@ -229,7 +236,7 @@ Return only the JSON, no additional commentary."""
                     messages=[
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.3,
+                    temperature=self.temperature,
                 )
                 return response.content[0].text
             
@@ -244,16 +251,33 @@ Return only the JSON, no additional commentary."""
                 return response['message']['content']
             
         except Exception as e:
-            print(f"Error calling LLM: {e}")
+            logger.error(f"Error calling LLM: {e}")
             return '{"error": "LLM call failed"}'
     
     def _chunk_text(self, text: str, chunk_size: int) -> List[str]:
-        """Split text into chunks for processing."""
-        # Simple chunking - could be improved with sentence-aware splitting
+        """
+        Split text into chunks for processing.
+        Uses sentence-aware splitting to preserve context boundaries.
+        """
         chunks = []
-        for i in range(0, len(text), chunk_size):
-            chunks.append(text[i:i+chunk_size])
-        return chunks
+        sentences = text.split('. ')  # Simple sentence splitting
+        
+        current_chunk = ""
+        for sentence in sentences:
+            # Add sentence to current chunk if it fits
+            if len(current_chunk) + len(sentence) + 2 <= chunk_size:
+                current_chunk += sentence + ". "
+            else:
+                # Save current chunk and start new one
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = sentence + ". "
+        
+        # Add the last chunk
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks if chunks else [text]  # Return full text if no splitting occurred
     
     def _merge_characters(self, characters: List[Dict]) -> List[Dict]:
         """Merge duplicate characters from multiple chunks."""
